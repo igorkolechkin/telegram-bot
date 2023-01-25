@@ -1,52 +1,70 @@
 require('dotenv').config();
 const TelegramApi = require('node-telegram-bot-api');
-const usefulFn = require('./helpers/usefulFunctions');
-const {gameOptions, gameOptionsAgain} = require('./helpers/options')
+const axios = require('axios');
+const cc = require('currency-codes');
+
+const { defaultCurrencies } = require('./helpers/currencies');
+const { getUserName } = require('./helpers/usefulFunctions');
+
+const currencyInfo = {
+  limitTime: false
+}
 
 const bot = new TelegramApi(process.env.BOT_TOKEN, { polling: true });
 
-const chatInfo = {};
-
-const gameLogic = async (chatId) => {
-  chatInfo.randomNumber = usefulFn.randomNumber();
-
-  await bot.sendMessage(chatId,'Guess the number from 1 to 10', gameOptions);
-}
-
 bot.setMyCommands([
-  {command: '/start', description: 'Start bot'},
-  {command: '/game', description: 'Play game'}
+  { command: '/start', description: 'Start bot' },
+  { command: '/currency', description: 'Get currency info' }
 ])
 
 bot.on('message', async ctx => {
   const { text, from } = ctx;
   const chatId = ctx.chat.id;
+  const codeInfo = cc.code(text);
 
   if (text === '/start') {
-    chatInfo.username = usefulFn.getUserName(from);
+    const userName = getUserName(from);
 
-    await bot.sendMessage(chatId, '👋');
-    return bot.sendMessage(chatId, `Is your name ${chatInfo.username}?`);
+    return await bot.sendMessage(chatId, `Hello, ${userName}!`)
   }
 
-  if (text === '/game') {
-    return gameLogic(chatId);
+  if (text === '/currency') {
+    return await bot.sendMessage(chatId, 'Enter currency', defaultCurrencies)
   }
 
-  return bot.sendMessage(chatId, 'I not understand you..')
-})
-
-bot.on('callback_query', async ctx => {
-  const data = ctx.data;
-  const chatId = ctx.message.chat.id;
-
-  if (data === '/again') {
-    return gameLogic(chatId);
+  if (!/^[A-Z]+$/i.test(text) || !codeInfo) {
+    return await bot.sendMessage(chatId, 'Incorrect currency');
   }
 
-  if (data === chatInfo.randomNumber) {
-    return await bot.sendMessage(chatId, `You guessed the number! ${chatInfo.randomNumber}`, gameOptionsAgain);
-  } else {
-    return await bot.sendMessage(chatId, `Try once more. Number: ${chatInfo.randomNumber}`, gameOptionsAgain);
+  try {
+    if (!currencyInfo.limitTime) {
+      const response = await axios.get('https://api.monobank.ua/bank/currency');
+
+      currencyInfo.list = response.data;
+      currencyInfo.limitTime = true;
+    } else {
+      setTimeout(() => {
+        currencyInfo.limitTime = false
+      }, 1000 * 60 * 5);
+    }
+
+    const currency = await currencyInfo.list.find(elem => elem.currencyCodeA.toString() === codeInfo.number);
+
+    if (!currency) {
+      return await bot.sendMessage(chatId, 'Something wrong with currency data...')
+    }
+
+    return await bot.sendMessage(chatId,
+      `Currency: ${codeInfo.currency}
+Buy: ${currency.rateBuy}
+Sell: ${currency.rateSell}`,
+      {
+        reply_markup: {
+          remove_keyboard: true
+        }
+      });
+  } catch (error) {
+    console.log('error', currencyInfo.limitTime)
+    console.log('error', error)
   }
 })
